@@ -1,6 +1,7 @@
 import sys, signal, threading, traceback, subprocess, time, board, digitalio, adafruit_ssd1306
 from adafruit_ht16k33.segments import Seg7x4
 from PIL import Image, ImageDraw, ImageFont
+from clock_segments import sex_to_bits
 
 
 # used to stop threads
@@ -13,11 +14,11 @@ RIGHT_ADDR = 0x71
 SMALL_ADDR = 0x3C
 
 # configure seven-segment displays
-SEVEN_SEG_FREQUENCY = 60  # 180 Hz
+SEVEN_SEG_FREQUENCY = 60 * 3 # 180 Hz
 BRIGHTNESS = 8 * 0.0625
 BLINK_SEPARATORS = True
-left_7seg = Seg7x4(i2c, address=LEFT_ADDR)
-right_7seg = Seg7x4(i2c, address=RIGHT_ADDR)
+left_7seg = Seg7x4(i2c, address=LEFT_ADDR, auto_write=False)
+right_7seg = Seg7x4(i2c, address=RIGHT_ADDR, auto_write=False)
 left_7seg.brightness = BRIGHTNESS
 right_7seg.brightness = BRIGHTNESS
 
@@ -40,9 +41,6 @@ red_top.direction = digitalio.Direction.OUTPUT
 grn_top.direction = digitalio.Direction.OUTPUT
 red_bot.direction = digitalio.Direction.OUTPUT
 grn_bot.direction = digitalio.Direction.OUTPUT
-
-prev_left  = ""
-prev_right = ""
 
 def clear():
     left_7seg.fill(0)
@@ -71,20 +69,63 @@ def display(left, right):
 #        left_7seg.colon = False
 #    right_7seg.print(right);
 
+prev_hour   = 99
+prev_minute = 99
+prev_second = 99
+prev_third  = 99
+
 def display_time():
+    global prev_hour, prev_minute, prev_second, prev_third
 #    print("begin: ", time.time())
     t = time.time()
     lt = time.localtime(t)
+
     third = int((t%1)*60)
+    (third_left, third_right) = sex_to_bits[third]
+    right_7seg.set_digit_raw(2, third_left)
+    right_7seg.set_digit_raw(3, third_right)
+    prev_third = third
 
-    if BLINK_SEPARATORS and third > 29:
-        left = time.strftime("%H%M", lt)
-        right = time.strftime("%%S%02i"%third, lt)
-    else:
-        left = time.strftime("%H:%M.", lt)
-        right = time.strftime("%%S.%02i"%third, lt)
+    if   BLINK_SEPARATORS and third < prev_third:
+        dotmask = 0b10000000
+    elif BLINK_SEPARATORS and prev_third < 29 <= third:
+        dotmask = 0b00000000
 
-    display(left, right)
+        
+#        left = time.strftime("%H%M", lt)
+#        right = time.strftime("%%S%02i"%third, lt)
+#    else:
+#        left = time.strftime("%H:%M.", lt)
+#        right = time.strftime("%%S.%02i"%third, lt)
+
+    second = lt.tm_sec
+    if second == prev_second:
+        right_7seg.show()
+        return
+    (second_left, second_right) = sex_to_bits[second]
+    right_7seg.set_digit_raw(0, second_left)
+    right_7seg.set_digit_raw(1, second_right)
+    prev_second = second
+    right_7seg.show()
+
+    minute = lt.tm_min
+    if minute == prev_minute:
+        return
+    (minute_left, minute_right) = sex_to_bits[minute]
+    left_7seg.set_digit_raw(2, minute_left)
+    left_7seg.set_digit_raw(3, minute_right)
+    prev_minute = minute
+
+    hour = lt.tm_hour
+    if hour == prev_hour:
+        left_7seg.show()
+        return
+    (hour_left, hour_right) = sex_to_bits[hour]
+    left_7seg.set_digit_raw(0, hour_left)
+    left_7seg.set_digit_raw(1, hour_right)
+    prev_hour = hour
+    left_7seg.show()
+
 #    print("  end: ", time.time())
 
 def bye_bye(signal_received, frame):
@@ -170,10 +211,6 @@ def every(delay, task, name):
             # in production code you might want to have this instead of course:
             # logger.exception("Problem while executing repetitive task.")
         # skip tasks if we are behind schedule:
-#        if (time.time() > next_time):
-#            print("oops: %s %f"%(name, next_time - time.time()))
-#        if (time.time() > next_time):
-#            print("oops: %s %f %f"%(name, time.time(), next_time))
         next_time += (time.time() - next_time) // delay * delay + delay
 
 clear()
@@ -182,15 +219,15 @@ signal.signal(signal.SIGINT, bye_bye)
 signal.signal(signal.SIGTERM, bye_bye)
 
 clock = threading.Thread(name="clock", target=lambda: every(1/SEVEN_SEG_FREQUENCY, display_time, "clock"))
-tracking = threading.Thread(name="tracking", target=lambda: every(1/SMALL_OLED_FREQUENCY, display_tracking, "tracking"))
-top_light = threading.Thread(name="antenna_light", target=antenna_light)
+#tracking = threading.Thread(name="tracking", target=lambda: every(1/SMALL_OLED_FREQUENCY, display_tracking, "tracking"))
+#top_light = threading.Thread(name="antenna_light", target=antenna_light)
 
 clock.start()
-tracking.start()
-top_light.start()
+#tracking.start()
+#top_light.start()
 
 clock.join()
 tracking.join()
-top_light.join()
+#top_light.join()
 clear()
 sys.exit(0)
