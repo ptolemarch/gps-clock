@@ -1,7 +1,7 @@
 import sys, signal, threading, traceback, subprocess, time, board, digitalio, adafruit_ssd1306
 from adafruit_ht16k33.segments import Seg7x4
 from PIL import Image, ImageDraw, ImageFont
-from clock_segments import sex_to_bits
+from clock_segments import sex_to_dec, dec_to_bits
 
 
 # used to stop threads
@@ -14,7 +14,7 @@ RIGHT_ADDR = 0x71
 SMALL_ADDR = 0x3C
 
 # configure seven-segment displays
-SEVEN_SEG_FREQUENCY = 60 * 3 # 180 Hz
+SEVEN_SEG_FREQUENCY = 60 * 10 # 600 Hz
 BRIGHTNESS = 8 * 0.0625
 BLINK_SEPARATORS = True
 left_7seg = Seg7x4(i2c, address=LEFT_ADDR, auto_write=False)
@@ -23,7 +23,7 @@ left_7seg.brightness = BRIGHTNESS
 right_7seg.brightness = BRIGHTNESS
 
 # configure OLED displays
-SMALL_OLED_FREQUENCY = 20  # 10 Hz
+SMALL_OLED_FREQUENCY = 1  # 1 Hz
 SMALL_WIDTH = 128
 SMALL_HEIGHT = 32  # Change to 64 if needed
 small_oled = adafruit_ssd1306.SSD1306_I2C(SMALL_WIDTH, SMALL_HEIGHT, i2c, addr=SMALL_ADDR)
@@ -42,9 +42,8 @@ grn_top.direction = digitalio.Direction.OUTPUT
 red_bot.direction = digitalio.Direction.OUTPUT
 grn_bot.direction = digitalio.Direction.OUTPUT
 
-def clear():
-    left_7seg.fill(0)
-    right_7seg.fill(0)
+def init():
+    init_time()
     small_oled.fill(0)
     small_oled.show()
     red_top.value = False
@@ -52,81 +51,131 @@ def clear():
     red_bot.value = False
     grn_bot.value = False
 
-def display(left, right):
-    if right != prev_right:
-        right_7seg.print(right)
-    else:
-        return
-    if left != prev_left:
-        left_7seg.print(left)
-        if left[2] != ":":
-            left_7seg.colon = False
-#def display(left, right):
-#    if right == prev_right and left == prev_left:
-#        return
-#    left_7seg.print(left)
-#    if left[2] != ":":
-#        left_7seg.colon = False
-#    right_7seg.print(right);
+def clear():
+    left_7seg.fill(0)
+    left_7seg.show()
+    right_7seg.fill(0)
+    right_7seg.show()
+    small_oled.fill(0)
+    small_oled.show()
+    red_top.value = False
+    grn_top.value = False
+    red_bot.value = False
+    grn_bot.value = False
 
-prev_hour   = 99
-prev_minute = 99
-prev_second = 99
-prev_third  = 99
+prev_time = dict(
+    nothing = 'here',
+)
 
-def display_time():
-    global prev_hour, prev_minute, prev_second, prev_third
-#    print("begin: ", time.time())
+def init_time():
+    global prev_time
     t = time.time()
     lt = time.localtime(t)
-
     third = int((t%1)*60)
-    (third_left, third_right) = sex_to_bits[third]
-    right_7seg.set_digit_raw(2, third_left)
-    right_7seg.set_digit_raw(3, third_right)
-    prev_third = third
 
-    if   BLINK_SEPARATORS and third < prev_third:
-        dotmask = 0b10000000
-    elif BLINK_SEPARATORS and prev_third < 29 <= third:
-        dotmask = 0b00000000
+    prev_time = dict(
+        third = third,
+        third_right = third % 10,
+        third_left = third // 10,
+        second = lt.tm_sec,
+        second_right = lt.tm_sec % 10,
+        second_left = lt.tm_sec // 10,
+        minute = lt.tm_min,
+        minute_right = lt.tm_min % 10,
+        minute_left = lt.tm_min // 10,
+        hour = lt.tm_hour,
+        hour_right = lt.tm_hour % 10,
+        hour_left = lt.tm_hour // 10,
+    )
 
-        
-#        left = time.strftime("%H%M", lt)
-#        right = time.strftime("%%S%02i"%third, lt)
-#    else:
-#        left = time.strftime("%H:%M.", lt)
-#        right = time.strftime("%%S.%02i"%third, lt)
+    if BLINK_SEPARATORS and third > 29:
+        left_7seg.print(time.strftime("%H%M", lt))
+        right_7seg.print(time.strftime("%%S%02i"%third, lt))
+    else:
+        left_7seg.print(time.strftime("%H:%M.", lt))
+        right_7seg.print(time.strftime("%%S.%02i"%third, lt))
 
-    second = lt.tm_sec
-    if second == prev_second:
+def display_time():
+    # C'est magnifique, mais ce n'est pas la guerre.
+    # It is pretty damned fast, though.
+    global prev_time
+    t = time.time()
+    lt = time.localtime(t)
+    third = int((t%1)*60)
+    if third == prev_time['third']:
+        return
+
+    dotbit = 0b10000000
+
+    if BLINK_SEPARATORS and third < prev_time['third']:
+        dotbit = 0b10000000
+        right_7seg.set_digit_raw(1, dec_to_bits[prev_time['second_right']] | dotbit)
+        left_7seg.set_digit_raw(3, dec_to_bits[prev_time['minute_right']] | dotbit)
+        left_7seg.colon = True
+        left_7seg.show()
+    elif BLINK_SEPARATORS and prev_time['third'] < 29 <= third:
+        dotbit = 0b00000000
+        right_7seg.set_digit_raw(1, dec_to_bits[prev_time['second_right']] | dotbit)
+        left_7seg.set_digit_raw(3, dec_to_bits[prev_time['minute_right']] | dotbit)
+        left_7seg.colon = False
+        left_7seg.show()
+
+    (third_left, third_right) = sex_to_dec[third]
+    prev_time['third'] = third
+    prev_time['third_right'] = third_right
+    right_7seg.set_digit_raw(3, dec_to_bits[third_right])
+
+    if third_left == prev_time['third_left']:
         right_7seg.show()
         return
-    (second_left, second_right) = sex_to_bits[second]
-    right_7seg.set_digit_raw(0, second_left)
-    right_7seg.set_digit_raw(1, second_right)
-    prev_second = second
+    prev_time['third_left'] = third_left
+    right_7seg.set_digit_raw(2, dec_to_bits[third_left])
+
+    second = lt.tm_sec
+    if second == prev_time['second']:
+        right_7seg.show()
+        return
+    (second_left, second_right) = sex_to_dec[second]
+    prev_time['second'] = second
+    prev_time['second_right'] = second_right
+    right_7seg.set_digit_raw(1, dec_to_bits[second_right] | dotbit)
+
+    if second_left == prev_time['second_left']:
+        right_7seg.show()
+        return
+    prev_time['second_left'] = second_left
+    right_7seg.set_digit_raw(0, dec_to_bits[second_left])
     right_7seg.show()
 
     minute = lt.tm_min
-    if minute == prev_minute:
+    if minute == prev_time['minute']:
         return
-    (minute_left, minute_right) = sex_to_bits[minute]
-    left_7seg.set_digit_raw(2, minute_left)
-    left_7seg.set_digit_raw(3, minute_right)
-    prev_minute = minute
+    (minute_left, minute_right) = sex_to_dec[minute]
+    prev_time['minute'] = minute
+    prev_time['minute_right'] = minute_right
+    left_7seg.set_digit_raw(3, dec_to_bits[minute_right] | dotbit)
 
-    hour = lt.tm_hour
-    if hour == prev_hour:
+    if minute_left == prev_time['minute_left']:
         left_7seg.show()
         return
-    (hour_left, hour_right) = sex_to_bits[hour]
-    left_7seg.set_digit_raw(0, hour_left)
-    left_7seg.set_digit_raw(1, hour_right)
-    prev_hour = hour
-    left_7seg.show()
+    prev_time['minute_left'] = minute_left
+    left_7seg.set_digit_raw(2, dec_to_bits[minute_left])
 
-#    print("  end: ", time.time())
+    hour = lt.tm_hour
+    if hour == prev_time['hour']:
+        left_7seg.show()
+        return
+    (hour_left, hour_right) = sex_to_dec[hour]
+    prev_time['hour'] = hour
+    prev_time['hour_right'] = hour_right
+    left_7seg.set_digit_raw(1, dec_to_bits[hour_right])
+
+    if hour_left == prev_time['hour_left']:
+        left_7seg.show()
+        return
+    prev_time['hour_left'] = hour_left
+    left_7seg.set_digit_raw(0, dec_to_bits[hour_left])
+    left_7seg.show()
 
 def bye_bye(signal_received, frame):
     global KEEP_ON_TICKING
@@ -194,16 +243,17 @@ def antenna_light():
                 red_top.value = False
                 grn_top.value = False
 
-
 ## This next bit is adapted from Stack Overflow
 ##   https://stackoverflow.com/a/49801719
-def every(delay, task, name):
+def every(delay, task, lock):
     global KEEP_ON_TICKING
     next_time = time.time() + delay
     while KEEP_ON_TICKING:
         time.sleep(max(0, next_time - time.time()))
         try:
+            lock.acquire()
             task()
+            lock.release()
         except Exception:
             clear()
             traceback.print_exc()
@@ -213,21 +263,23 @@ def every(delay, task, name):
         # skip tasks if we are behind schedule:
         next_time += (time.time() - next_time) // delay * delay + delay
 
-clear()
+init()
 
 signal.signal(signal.SIGINT, bye_bye)
 signal.signal(signal.SIGTERM, bye_bye)
 
-clock = threading.Thread(name="clock", target=lambda: every(1/SEVEN_SEG_FREQUENCY, display_time, "clock"))
-#tracking = threading.Thread(name="tracking", target=lambda: every(1/SMALL_OLED_FREQUENCY, display_tracking, "tracking"))
-#top_light = threading.Thread(name="antenna_light", target=antenna_light)
+lock = threading.Lock()
+
+clock = threading.Thread(name="clock", target=lambda: every(1/SEVEN_SEG_FREQUENCY, display_time, lock))
+tracking = threading.Thread(name="tracking", target=lambda: every(1/SMALL_OLED_FREQUENCY, display_tracking, lock))
+top_light = threading.Thread(name="antenna_light", target=antenna_light)
 
 clock.start()
-#tracking.start()
-#top_light.start()
+tracking.start()
+top_light.start()
 
 clock.join()
 tracking.join()
-#top_light.join()
+top_light.join()
 clear()
 sys.exit(0)
