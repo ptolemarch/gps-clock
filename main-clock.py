@@ -4,8 +4,15 @@ from PIL import Image, ImageDraw, ImageFont
 from clock_segments import sex_to_dec, dec_to_bits
 
 
-# used to stop threads
-KEEP_ON_TICKING = True
+CLOCK_FREQUENCY = 60 * 10 # 600 Hz
+#TRACKING_FREQUENCY = 1  # 1 Hz
+PPSWATCH_COMMAND = [
+        "sudo",
+    "/usr/bin/ppswatch", "-a", "/dev/pps0"
+]
+GPSPIPE_COMMAND = [
+    "/usr/bin/gpspipe", "-r"
+]
 
 # I2C
 i2c = board.I2C()
@@ -14,7 +21,6 @@ RIGHT_ADDR = 0x71
 SMALL_ADDR = 0x3C
 
 # configure seven-segment displays
-SEVEN_SEG_FREQUENCY = 60 * 10 # 600 Hz
 BRIGHTNESS = 8 * 0.0625
 BLINK_SEPARATORS = True
 left_7seg = Seg7x4(i2c, address=LEFT_ADDR, auto_write=False)
@@ -23,7 +29,6 @@ left_7seg.brightness = BRIGHTNESS
 right_7seg.brightness = BRIGHTNESS
 
 # configure OLED displays
-SMALL_OLED_FREQUENCY = 1  # 1 Hz
 SMALL_WIDTH = 128
 SMALL_HEIGHT = 32  # Change to 64 if needed
 small_oled = adafruit_ssd1306.SSD1306_I2C(SMALL_WIDTH, SMALL_HEIGHT, i2c, addr=SMALL_ADDR)
@@ -62,6 +67,9 @@ def clear():
     grn_top.value = False
     red_bot.value = False
     grn_bot.value = False
+
+# used to stop threads
+KEEP_ON_TICKING = True
 
 prev_time = dict(
     nothing = 'here',
@@ -181,13 +189,12 @@ def bye_bye(signal_received, frame):
     global KEEP_ON_TICKING
     KEEP_ON_TICKING = False
 
-tracking_font = ImageFont.load('/home/ptolemarch/Fonts/B612Mono.pil')
+offset_font = ImageFont.load('/home/ptolemarch/Fonts/B612Mono.pil')
+offset_font_tiny = ImageFont.load('/home/ptolemarch/Fonts/progsole-10.pil')
 small_oled_image = Image.new("1", (small_oled.width, small_oled.height))
 small_oled_draw = ImageDraw.Draw(small_oled_image)
 
 def display_tracking():
-    small_oled_draw.rectangle((0, 0, small_oled.width, small_oled.height), outline=0, fill=0)
-
     seconds = ""
     sign = ""
 
@@ -204,11 +211,13 @@ def display_tracking():
 
     microseconds = sign * round(float(seconds) * 1000000, 3)
     text = "%+4.3f\xB5s"%(microseconds)
-    (font_width, font_height) = tracking_font.getsize(text)
+    (font_width, font_height) = offset_font.getsize(text)
+
+    small_oled_draw.rectangle((0, 0, small_oled.width, small_oled.height), outline=0, fill=0)
     small_oled_draw.text(
         (small_oled.width // 2 - font_width // 2, small_oled.height // 2 - font_height // 2),
         text,
-        font=tracking_font,
+        font=offset_font,
         fill=255,
     )
 
@@ -216,14 +225,68 @@ def display_tracking():
     small_oled.show()
 
 
+def display_offset(lock):
+    ppswatch = False
+
+    while KEEP_ON_TICKING:
+        if (not ppswatch) or (ppswatch.poll() is not None):
+            ppswatch = subprocess.Popen(
+                PPSWATCH_COMMAND,
+                stdout=subprocess.PIPE,
+                universal_newlines=True
+            )
+            # throw away first two lines
+            _ = ppswatch.stdout.readline()
+            _ = ppswatch.stdout.readline()
+        words = ppswatch.stdout.readline().split()
+        if not words:
+            continue
+        offset = words[-1]
+        microseconds = float(offset) / 1000
+
+        text = "%+4.3f\xB5s"%(microseconds)
+        (font_width, font_height) = offset_font.getsize(text)
+        label = "PPS offset"
+        (font_width_tiny, font_height_tiny) = offset_font_tiny.getsize(label)
+
+        # blank for a quarter-second or so
+        lock.acquire()
+        small_oled_draw.rectangle((0, 0, small_oled.width, small_oled.height), outline=0, fill=0)
+        small_oled_draw.text(
+            (0, small_oled.height - font_height_tiny),
+            label,
+            font=offset_font_tiny,
+            fill=255,
+        )
+        small_oled.image(small_oled_image)
+        small_oled.show()
+        lock.release()
+        time.sleep(0.25)
+
+        lock.acquire()
+        small_oled_draw.rectangle((0, 0, small_oled.width, small_oled.height), outline=0, fill=0)
+        small_oled_draw.text(
+#            (small_oled.width // 2 - font_width // 2, small_oled.height // 2 - font_height // 2),
+            (small_oled.width // 2 - font_width // 2, small_oled.height - font_height),
+            text,
+            font=offset_font,
+            fill=255,
+        )
+        small_oled.image(small_oled_image)
+        small_oled.show()
+        lock.release()
+
 def antenna_light():
-    global KEEP_ON_TICKING
-    gpspipe = subprocess.Popen([
-        "/usr/bin/gpspipe", "-r"
-    ], stdout=subprocess.PIPE, universal_newlines=True)
+    gpspipe = False
 
     # TODO: if dies, restart?
-    while KEEP_ON_TICKING and (gpspipe.poll() is None):
+    while KEEP_ON_TICKING:
+        if (not gpspipe) or (gpspipe.poll() is not None):
+            gpspipe = subprocess.Popen(
+                GPSPIPE_COMMAND,
+                stdout=subprocess.PIPE,
+                universal_newlines=True
+            )
         line = gpspipe.stdout.readline().rstrip()
         if line.startswith("$PCD"):
             if line.endswith("1*", 0, -2):
@@ -246,7 +309,6 @@ def antenna_light():
 ## This next bit is adapted from Stack Overflow
 ##   https://stackoverflow.com/a/49801719
 def every(delay, task, lock):
-    global KEEP_ON_TICKING
     next_time = time.time() + delay
     while KEEP_ON_TICKING:
         time.sleep(max(0, next_time - time.time()))
@@ -269,17 +331,32 @@ signal.signal(signal.SIGINT, bye_bye)
 signal.signal(signal.SIGTERM, bye_bye)
 
 lock = threading.Lock()
+antenna = threading.Thread(
+    name="antenna",
+    target=lambda: antenna_light()
+)
+clock = threading.Thread(
+    name="clock",
+    target=lambda: every(1/CLOCK_FREQUENCY, display_time, lock)
+)
+offset = threading.Thread(
+    name="offset",
+    target=lambda: display_offset(lock)
+)
+#tracking = threading.Thread(
+#    name="tracking",
+#    target=lambda: every(1/TRACKING_FREQUENCY, display_tracking, lock)
+#)
 
-clock = threading.Thread(name="clock", target=lambda: every(1/SEVEN_SEG_FREQUENCY, display_time, lock))
-tracking = threading.Thread(name="tracking", target=lambda: every(1/SMALL_OLED_FREQUENCY, display_tracking, lock))
-top_light = threading.Thread(name="antenna_light", target=antenna_light)
-
+antenna.start()
 clock.start()
-tracking.start()
-top_light.start()
+#tracking.start()
+offset.start()
 
+antenna.join()
 clock.join()
-tracking.join()
-top_light.join()
+#tracking.join()
+offset.join()
+
 clear()
 sys.exit(0)
