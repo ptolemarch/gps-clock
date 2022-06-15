@@ -113,7 +113,7 @@ if __name__ == '__main__':
 
     def main():
         from argparse import ArgumentParser, BooleanOptionalAction
-        import argparse, board
+        import board
 
         argyle = ArgumentParser()
         argyle.add_argument('-a', '--address',
