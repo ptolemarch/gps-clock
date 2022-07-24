@@ -1,5 +1,10 @@
 from adafruit_ht16k33.segments import Seg7x4
 
+# FWIW, newer versions of adafruit_ht16k33.segments.Seg7x4 support multiple
+# displays in a single object. Might eventually want to reorganize
+# this and Clock to use that. See
+#   https://docs.circuitpython.org/projects/ht16k33/en/latest/api.html#adafruit-ht16k33-segments
+
 #   -- 1 --            -- A --      
 #  |       |          |       |
 # 32       2          F       B

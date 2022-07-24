@@ -1,6 +1,11 @@
 import time
 from halfclock import HalfClock
 
+# FWIW, newer versions of adafruit_ht16k33.segments.Seg7x4 support multiple
+# displays in a single object. Might eventually want to reorganize
+# this and HalfClock to use that. See
+#   https://docs.circuitpython.org/projects/ht16k33/en/latest/api.html#adafruit-ht16k33-segments
+
 class Clock:
     def __init__(self, hm: HalfClock, st: HalfClock, blink=True):
         self.hm = hm
