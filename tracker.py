@@ -1,12 +1,10 @@
 import asyncio
 
 class Tracker:
-    # only ever one subprocess
-    proc = None
-
     def __init__(self, cmd, *parsers):
         self.cmd = cmd
         self.parsers = parsers
+        self.proc = None
         self.accumulator = dict(
         # this was only here to provide a default true value
         # but that also means it can never possibly end,
