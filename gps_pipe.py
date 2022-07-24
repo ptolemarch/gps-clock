@@ -94,6 +94,9 @@ class GPSPipeParser:
                 altitude = report['altMSL'],
                 error_2d = report['eph'],
                 error_3d = report['sep'],
+                error_latitude = report['epy'],
+                error_longitude = report['epx'],
+                error_altitude = report['epv'],
             )
         if rclass == "SKY":
             # TODO: count
