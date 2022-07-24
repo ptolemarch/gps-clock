@@ -83,7 +83,7 @@ class GPSPipeParser:
             nsec = (sec * 1e9) + (report['clock_nsec'] - report['real_nsec'])
             usec = nsec / 1e3
             return dict(
-               offset = usec,
+               pps_offset = usec,
             )
         if rclass == "TPV":
             return dict(
