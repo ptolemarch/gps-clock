@@ -1,61 +1,43 @@
-import digitalio, time, enum, collections
+import digitalio, enum, collections, itertools, warnings
+from collections import defaultdict
 from adafruit_debouncer import Debouncer
 
-# Note on implementation and design:
-# It would probably be better to use adafruit_debouncer.Button, if I could,
-# rather than the lower-level adafruit_debouncer.Debouncer. I'm certainly
-# reproducing here logic that already exists in Button. The reason I'm not
-# using Button is twofold:
-# - While Button makes a nice distinction between presses and long presses,
-#   I'd like to have a third category of super-long presses.
-# - I also want to be able to recognize simultaneous (or, rather,
-#   near-simultaneous) presses of both buttons. On a reasonably fast update()
-#   loop, this becomes difficult. (1/60 of a second is a pretty short time,
-#   even for fingers that are right next to each other.)
-# - This means that, even using Button, I'd have to be doing my own timing,
-#   at which point it feels like I should just use Debouncer itself.
-# (I intend to use the gesture of a five-second-long two-button press as the
-# instruction to shut down the computer.)
+# dataclasses and their type annotations
+from dataclasses import dataclass
+from typing import Tuple, FrozenSet
+from adafruit_blinka.microcontroller.bcm283x.pin import Pin
 
-# After about two day's worth of over-thinking this, I think I've come up
-# with a way of reducing this from massively overengineered to merely clearly
-# overengineered. Here's the plan:
-# - For now I'm going to use the word, "gesture", to refer to a single event,
-#   which may consist of a single button press or a related series of presses.
-# - A button "press" has two components, in this order: First, the button goes
-#   "down", and then it goes "up". In the case of the "super-long press", the
-#   up component is inferred/skipped/ignored.
-# - Buttons are assigned numbers based upon their order in the *pins argument.
-#   These numbers are powers of two.
-# - A single gesture is reported as coming from some particular button,
-#   identified by number.
-# - A gesture consists of a sequence of presses. The gesture is complete when
-#   the button goes up and then does NOT go down within repeated_press_max.
-# - A gesture may consist of multiple physical buttons, but it is always
-#   reported as coming from some particular button. In the case of multiple
-#   physical butons, the button number is the sum of the numbers of the
-#   component physical buttons.
-# - For a gesture to consist of multiple physical buttons, each button must go
-#   down within multiple_press_max and then go up within multiple_press_max.
-# - A gesture consisting of multiple physical buttons is identified at the
-#   END of the button presses of which it's comprised.
 
-# tunable durations:
-# - short press minimum  (used as Debouncer().interval)
-# -   "     "   maximum
-# - long press minimum
-# - super-long press minimum
-# - maximum delay between presses to count as a repeated press
-# -    "      "      "       "    "    "   "  " multiple press
-
-class ButtonConfig:
+class DebouncerConfig:
+    # durations of presses:
     short_press_min = 2/60
     long_press_min = 30/60
     xlong_press_min = 5
-    repeated_press_max = 20/60
+    # delays between presses:
+    repeated_press_max = 10/60
     multiple_press_max = 5/60
 
-class PressLength(enum.Enum):
+
+class DebouncerValue(enum.Enum):
+    DOWN = False   # pressed
+    UP = True      # released
+
+    def __bool__(self):
+        return bool(self.value)
+
+    @staticmethod
+    def is_DOWN(value):
+        return not bool(value)
+
+    @staticmethod
+    def is_UP(value):
+        return bool(value)
+
+    def __str__(self):
+        return "DOWN" if self.is_DOWN(self.value) else "UP"
+
+
+class Press(enum.Enum):
     SHORT = "."
     LONG = "_"
     XLONG = "~"
@@ -65,172 +47,392 @@ class PressLength(enum.Enum):
 
     @classmethod
     def fromSeconds(cls, seconds):
-        if seconds < ButtonConfig.long_press_min:
+        if seconds < DebouncerConfig.short_press_min:
+            return None
+        if seconds < DebouncerConfig.long_press_min:
             return cls.SHORT
-        if seconds < ButtonConfig.xlong_press_min:
+        if seconds < DebouncerConfig.xlong_press_min:
             return cls.LONG
         return cls.XLONG
 
 
-# a Press, or a Sequence, is identified solely by its timing
-# a Gesture is idenitifed solely by its PressLengths
+@dataclass(frozen=True)  # therefore hashable
+class PressSequence:
+    presses: Tuple[Press]
 
-class Press:
-    def __init__(self, begin, end):
-        self.begin = begin
-        self.end = end
-    def __eq__(self, other):
-        print("comparing presses")
-        print(f" self.begin: {self.begin}")
-        print(f"   self.end: {self.end}")
-        print(f"other.begin: {other.begin} ({self.begin - other.begin})")
-        print(f"  other.end: {other.end} ({self.end - other.end})")
-        return (
-            abs(self.begin - other.begin) <= ButtonConfig.multiple_press_max
-            and
-            abs(self.end - other.end) <= ButtonConfig.multiple_press_max
-        )
-    def __hash__(self):
-        return hash((self.begin, self.end))
-    def length(self):
-        return PressLength.fromSeconds(self.end - self.begin)
+    def __init__(self, presses):
+        if isinstance(presses, str):
+            object.__setattr__(self, 'presses',
+                tuple(Press(c) for c in presses)
+            )
+        elif isinstance(presses, list):
+            object.__setattr__(self, 'presses',
+                tuple(self.__no_none(presses))
+            )
+        elif isinstance(presses, tuple):
+            object.__setattr__(self, 'presses',
+                tuple(self.__no_none(presses))
+            )
+        else:
+            raise TypeError("can't make a PressSequence out of this")
 
-class Sequence:
-    def __init__(self, *presses):
-        self.presses = presses
-    def __eq__(self, other):
-#        print("comparing sequences")
-#        print(f" self.presses: {self.presses}")
-#        print(f"other.presses: {other.presses}")
-        return self.presses == other.presses
-    def __hash__(self):
-        return hash(self.presses)
-    def __bool__(self):
-        return True if len(self.presses) else False
-    def lengths(self):
-        return tuple(p.length() for p in self.presses)
-
-class Gesture:
-    def __init__(self, *lengths):
-        self.lengths = lengths
-    def __eq__(self, other):
-        return self.lengths == other.lengths
-    def __hash__(self):
-        return hash(self.lengths)
     def __str__(self):
-        return "".join(str(l) for l in self.lengths)
-    def __bool__(self):
-        return True if len(self.lengths) else False
+        return ''.join(*presses)
 
-    @classmethod
-    def fromString(cls, string):
-        return cls(*(PressLength(s) for s in string))
+    def __no_none(self, presses):
+        return filter(lambda p: p is not None, presses)
+        
 
-    @classmethod
-    def fromSequence(cls, sequence):
-        return cls(*(sequence.lengths()))
-    
-
-class Button:
-    def __init__(self, pin):
-        dio = digitalio.DigitalInOut(pin)
-        # these next two lines, for direction and pull, must come in this order
-        dio.direction = digitalio.Direction.INPUT
-        dio.pull = digitalio.Pull.UP
-        self.db = Debouncer(dio, interval=ButtonConfig.short_press_min)
-        self.presses = []
-        self.last_fall_time = time.time()
-        self.last_rise_time = time.time()
-
-    # - update
-    # - keep account of what's going on
-    # - if we're at the end of a sequence, return it
-    def poll(self):
-        self.db.update()
-        now = time.time()
-
-        if self.db.fell:
-            print("fell")
-            self.last_fall_time = now - self.db.current_duration
-            return
-
-        if self.db.rose and self.last_fall_time:
-            print("rose")
-            self.last_rise_time = now - self.db.current_duration
-            self.presses.append(Press(
-                self.last_fall_time,
-                self.last_rise_time,
-            ))
-            return
-
-        if (
-            self.db.value  # button not currently held down
-            and
-            self.last_rise_time + ButtonConfig.repeated_press_max < now
-        ):
-            # at the end of a Sequence
-            sequence = Sequence(*(self.presses))
-            self.presses = []
-            return sequence
-
-        if (
-            not self.db.value  # button currently held down
-            and
-            self.last_fall_time
-            and
-            self.last_fall_time + ButtonConfig.xlong_press_min < now
-        ):
-            # xlong press always ends a Sequence
-            self.last_rise_time = now
-            sequence = Sequence(*(self.presses), Press(
-                self.last_fall_time,
-                self.last_rise_time
-            ))
-            self.last_fall_time = 0
-            self.presses = []
-            return sequence
-
-        return
-
+@dataclass(frozen=True)  # therefore hashable
+class Gesture:
+    button: FrozenSet[int]
+    presses: PressSequence
 
 
 class Buttons:
-    def __init__(self, handler, *buttons):
-        self.buttons = buttons
-        self.handler = handler
-#        if pins is None:
-#            pins = board.D18, board.D5
-#        self.buttons = [Button(p, 2**n) for n, p in enumerate(pins)]
+    def __init__(self, *pins):
+        self.dbs = [PinnedDebouncer(p) for p in pins]
+        self.states = [StartState(self.dbs)]
+        self.callbacks = dict()
+
+    def set_callback(self, pins, sequence_str, callback):
+        ids = frozenset(pin.id for pin in pins)
+        gesture = Gesture(ids, PressSequence(sequence_str))
+        self.callbacks[gesture] = callback
+
+    def delete_callback(self, pins, sequence_str):
+        ids = frozenset(pin.id for pin in pins)
+        gesture = Gesture(ids, PressSequence(sequence_str))
+        del self.callback[gesture]
+
+    def get_callback(self, pins, sequence_str):
+        ids = frozenset(pin.id for pin in pins)
+        gesture = Gesture(ids, PressSequence(sequence_str))
+        return self._get_callback(gesture)
+
+    def _get_callback(self, gesture):
+        if gesture in self.callbacks:
+            return self.callbacks[gesture]
+        return lambda: None
+
+    def _handle_callback(self, gesture):
+        self._get_callback(gesture)()
 
     def poll(self):
-        # collect sequences into buttons
-        sequences = collections.defaultdict(int)  # apparently the same as lambda:0
-        for n, b in enumerate(self.buttons):
-            sequence = b.poll()
-            if not sequence:
-                continue
-            print(f"-- button {2**n} -- {Gesture.fromSequence(sequence)} -- {hash(sequence)}")
-            sequences[sequence] += 2**n
+        new_states = list(itertools.chain.from_iterable(
+            state.change() for state in self.states
+        ))
+        in_progress = list(filter(
+            lambda s: not isinstance(s, CollapsibleState),
+            new_states
+        ))
+        starting = list(filter(
+            lambda s: isinstance(s, StartState),
+            new_states
+        ))
+        ending = list(filter(
+            lambda s: isinstance(s, EndState),
+            new_states
+        ))
 
-        # call handler
-        for sequence, number in sequences.items():
-            gesture = Gesture.fromSequence(sequence)
-            if not gesture:
-                continue
-            self.handler.handle(number, gesture)
+        # handle gestures
+        for state in ending:
+            self._handle_callback(state.gesture())
 
-if __name__ == '__main__':
-    import board
+        # collect PinnedDebouncers into a new StartState
+        dbs = list(itertools.chain.from_iterable(
+            s.dbs for s in itertools.chain(starting, ending)
+        ))
 
-    class Handler:
-        def handle(self, button, gesture):
-            print(f"[Button {button}]: {gesture}")
+        # set up new states
+        if dbs:
+            if len(starting) == 1 and len(ending) == 0:
+                self.states = list(itertools.chain(in_progress, starting))
+            else:
+                self.states = [*in_progress, StartState(dbs)]
+        else:
+            self.states = list(in_progress)
 
-    def main():
-        buttons = Buttons(Handler(), Button(board.D18), Button(board.D5))
 
-        while True:
-            time.sleep(1/60)
-            buttons.poll()
+class PinnedDebouncer:
+    def __init__(self, pin):
+        dio = digitalio.DigitalInOut(pin)
+        dio.direction = digitalio.Direction.INPUT
+        dio.pull = digitalio.Pull.UP
+        self.db = Debouncer(dio, interval=DebouncerConfig.short_press_min)
+        self.pin = pin
+
+    def update(self, new_state=None):
+        self.db.update(new_state)
+        self.fell = self.db.fell
+        self.rose = self.db.rose
+        self.current_duration = self.db.current_duration
+        self.last_duration = self.db.last_duration
+        self.value = self.db.value
+
+    @property
+    def down(self):
+        return DebouncerValue.is_DOWN(self.value)
+
+    @property
+    def up(self):
+        return DebouncerValue.is_UP(self.value)
+
+    def __str__(self):
+        pin = self.pin.id
+        value = DebouncerValue(self.db.value)
+        duration = self.db.current_duration
+
+        return f"[{pin}: {value} for {duration}]"
+
+
+# used in SomeDownState and SomeUpState, below
+class WTFError(Exception):
+    pass
+
+
+class DebouncerGroupState:
+    def __init__(self, dbs, history=None):
+        if history is None:
+            history = []
+        if not len(dbs):
+            raise ValueError("no debouncers!")
+        self.dbs = dbs
+        self.history = history
+
+    def poll(self):
+        for db in self.dbs:
+            db.update()
+
+    @classmethod
+    def transition_from(cls, other):
+        trans_from = type(other).__name__
+        trans_to = cls.__name__
+        return cls(other.dbs, other.history)
+
+
+class CollapsibleState(DebouncerGroupState):
+    pass
+
+class StartState(CollapsibleState):  # no gesture has begun
+    def change(self):
+        super().poll()
+
+        dbs_pressed = [db.fell for db in self.dbs]
+        # all pressed
+        if all(dbs_pressed):
+            return [AllDownState.transition_from(self)]
+        # some pressed
+        if any(dbs_pressed):
+            return [SomeDownState.transition_from(self)]
+
+        # still waiting for a gesture to begin
+        return [self]
+
+
+class SomeDownState(DebouncerGroupState):
+    def change(self):
+        super().poll()
+
+        # all down
+        if all(db.down for db in self.dbs):
+            return [AllDownState.transition_from(self)]
+
+        # more pressed
+        if any(db.fell for db in self.dbs):
+            return [self]
+
+        dbs_released = [db.rose for db in self.dbs]
+        # (all released: impossible, because not all are even down)
+        if all(dbs_released):
+            raise WTFError("they can't ALL have risen...")
+        # some released: split the DebouncerGroup
+        if any(dbs_released):
+            # group one:
+            # - the ones that are still down
+            # - the ones that have been released
+            # group two:
+            # - the ones that never went down
+            some_up_dbs = list(filter(
+                lambda p:DebouncerValue.is_DOWN(p.value) or p.rose,
+                self.dbs
+            ))
+            all_up_dbs = list(filter(
+                lambda p:DebouncerValue.is_UP(p.value) and not p.rose,
+                self.dbs
+            ))
+            return [
+                SomeUpState(some_up_dbs, self.history),
+                (AllUpState(all_up_dbs, self.history)
+                 if self.history else StartState(all_up_dbs))
+            ]
+
+        # we're done waiting for unanimity: split the DebouncerGroup
+        pressed_duration = min(db.current_duration for db in self.dbs if db.down)
+        if pressed_duration >= DebouncerConfig.multiple_press_max:
+            down_dbs = list(filter(
+                lambda p:DebouncerValue.is_DOWN(p.value),
+                self.dbs
+            ))
+            up_dbs = list(filter(
+                lambda p:DebouncerValue.is_UP(p.value),
+                self.dbs
+            ))
+            return [
+                AllDownState(down_dbs, self.history),
+                (AllUpState(up_dbs, self.history)
+                 if self.history else StartState(up_dbs))
+            ]
+        
+        # we're not done waiting for unanimity
+        return [self]
+
+
+class AllDownState(DebouncerGroupState):  # a press has begun
+    def change(self):
+        super().poll()
+
+        dbs_released = [db.rose for db in self.dbs]
+        # all released
+        if all(dbs_released):
+            return [AllUpState.transition_from(self)]
+        # some released
+        if any(dbs_released):
+            return [SomeUpState.transition_from(self)]
+
+        # long press (which necessarily ends the gesture)
+        pressed_duration = min(db.current_duration for db in self.dbs if db.down)
+        if pressed_duration >= DebouncerConfig.xlong_press_min:
+            return [EndState.transition_from(self)]
+
+        # not yet a long press, but we're still counting duration.
+        # This could yet resolve into a short, long, or xlong press
+        return [self]
+
+
+class SomeUpState(DebouncerGroupState):
+    def change(self):
+        super().poll()
+
+        # all up
+        if all(db.up for db in self.dbs):
+            return [AllUpState.transition_from(self)]
+
+        # more released
+        if any(db.rose for db in self.dbs):
+            return [self]
+
+        dbs_pressed = [db.fell for db in self.dbs]
+        # (all pressed: impossible, because not all are even up)
+        if all(dbs_pressed):
+            raise WTFError("they can't ALL have fallen...")
+        # some pressed: split the DebouncerGroup
+        if any(dbs_pressed):
+            # group one:
+            # - the ones that are still up
+            # - the ones that have been pressed
+            # group two:
+            # - the ones that never went up
+            some_down_dbs = list(filter(
+                lambda p:DebouncerValue.is_UP(p.value) or p.fell,
+                self.dbs
+            ))
+            all_down_dbs = list(filter(
+                lambda p:DebouncerValue.is_DOWN(p.value) and not p.fell,
+                self.dbs
+            ))
+            return [
+                SomeDownState(some_down_dbs, self.history),
+                AllDownState(all_down_dbs, self.history)
+            ]
+
+        # we're done waiting for unanimity: split the DebouncerGroup
+        released_duration = min(db.current_duration for db in self.dbs if db.up)
+        if released_duration >= DebouncerConfig.multiple_press_max:
+            up_dbs = list(filter(
+                lambda p:DebouncerValue.is_UP(p.value),
+                self.dbs
+            ))
+            down_dbs = list(filter(
+                lambda p:DebouncerValue.is_DOWN(p.value),
+                self.dbs
+            ))
+            return [
+                AllUpState(up_dbs, self.history),
+                AllDownState(down_dbs, self.history),
+            ]
+        
+        # we're not done waiting for unanimity
+        return [self]
+
+
+class AllUpState(DebouncerGroupState):  # a press has ended
+    def __init__(self, dbs, history=None):
+        if history is None:
+            history = []
+        press_duration = min(
+            (db.last_duration for db in dbs if db.up),
+            default=0
+        )
+        if press_duration:
+            history.append(Press.fromSeconds(press_duration))
+
+        super().__init__(dbs, history)
+
+    def change(self):
+        super().poll()
+        
+        dbs_pressed = [db.fell for db in self.dbs]
+        # all pressed
+        if all(dbs_pressed):
+            return [AllDownState.transition_from(self)]
+        # some pressed
+        if any(dbs_pressed):
+            return [SomeDownState.transition_from(self)]
+
+        # done with gesture
+        released_duration = min(db.current_duration for db in self.dbs if db.up)
+        if released_duration >= DebouncerConfig.repeated_press_max:
+            return [EndState.transition_from(self)]
+
+        # still waiting for a potential multi-press gesture
+        return [self]
+
+
+class EndState(CollapsibleState):  # the gesture has ended
+    def __init__(self, dbs, history=None):
+        if history is None:
+            history = []
+        # only way we get here with all buttons *down* is XLONG press
+        if all(DebouncerValue.is_DOWN(db.value) for db in dbs):
+            history.append(Press.XLONG)
+        super().__init__(dbs, history)
+
+    def change(self):  # this really never ought to get called
+        raise WTFError("why are you asking an EndState to change?!")
+
+    def gesture(self):
+        sequence = PressSequence(tuple(self.history))
+        return Gesture(frozenset(db.pin.id for db in self.dbs), sequence)
+
+
+def main():
+    keep_on_ticking = True
+    def stop_ticking():
+        nonlocal keep_on_ticking
+        keep_on_ticking = False
+
+    buttons = Buttons(board.D18, board.D5)
+    buttons.set_callback([board.D18], ".", lambda: print("-"*70, "boop"))
+    buttons.set_callback([board.D5], ".", lambda: print("-"*70, "beep"))
+
+    buttons.set_callback([board.D18, board.D5], "~", stop_ticking)
+
+    while keep_on_ticking:
+        time.sleep(1/60)
+        buttons.poll()
+
+if __name__ == "__main__":
+    import board, time
 
     main()
