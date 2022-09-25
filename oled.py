@@ -8,7 +8,8 @@ from math import floor
 from PIL import Image, ImageDraw, ImageFont
 from textwrap import dedent
 
-from scheduler import run_in
+from clock import sleep_until_interval
+#from scheduler import run_in
 
 # to convert TTF to PIL:
 #    otf2bdf -r 50 -c M -p 18 -o B612Mono.bdf B612Mono-Regular.ttf
@@ -105,13 +106,6 @@ def _gen_image(writ):
         draw.text((0,position_y), t, fill=255, font=font, spacing=spacing)
         position_y += line_height + spacing
 
-
-#    if align == WritAlign.TOP:
-#        position_y = 0
-#    else:
-#        position_y = spacing
-
-
     return image
 
 
@@ -166,12 +160,15 @@ class OLED:
             text=value
         )))
 
-        await run_in(0.5, (lambda: self.__show(_gen_image(Writ(
+        await sleep_until_interval(1/2)
+
+        self.__show(_gen_image(Writ(
             size=self.size,
             align=WritAlign.BOTTOM,
             font=self.label_font_filename,
             text=label
-        )))))
+        )))
+
         
 async def main():
     i2c = board.I2C()
@@ -187,7 +184,7 @@ async def main():
         "Altitude"
     ))
 
-    await asyncio.sleep(1)
+    await asyncio.sleep(0.5)
     await lol.clear()
 
 #        lol = adafruit_ssd1306.SSD1306_I2C(128, 64, i2c, addr=0x3d)
