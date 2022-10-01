@@ -18,13 +18,13 @@ async def sleep_until_interval(interval, result=None):
 
     # when is the next interval?
     when = ((now + interval) // interval) * interval
-    delay = when - now;
+    delay = when - now
 
     return await asyncio.sleep(delay, result)
-    
+
 
 class ClockConfig:
-    #   -- 1 --            -- A --      
+    #   -- 1 --            -- A --
     #  |       |          |       |
     # 32       2          F       B
     #  |       |          |       |
