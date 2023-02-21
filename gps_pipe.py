@@ -3,6 +3,10 @@ import json
 
 from tracker import Tracker
 
+# for main()
+import asyncio, sys
+
+
 class Lookupable:
     @classmethod
     def lookup(cls, value):
@@ -12,17 +16,20 @@ class Lookupable:
             value = 0
         return members[value]
 
+
 class AntennaStatus(Lookupable, Enum):
     UNKNOWN = "unknown"
     INTERNAL = "internal"
     EXTERNAL = "external"
     SHORTED = "shorted"
 
+
 class GPSMode(Lookupable, Enum):
     UNKNOWN = "unknown"
     NO_FIX = "no_fix"
     FIX_2D = "fix_2d"
     FIX_3D = "fix_3d"
+
 
 # gpsmon(1) calls this "Quality". My GPS is capable of
 # - UNKNOWN ("Fix not available")
@@ -40,11 +47,13 @@ class GPSStatus(Lookupable, Enum):
     SIMULATED = "simulated"
     PY = "p(y)"
 
+
 class JSONEncodeGPS(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, Enum):
             return str(obj)
         return json.JSONEncoder.default(self, obj)
+
 
 # NMEA reference: https://cdn-shop.adafruit.com/product-files/1059/CD+PA1616D+Datasheet+v.05.pdf
 # (also theoretically https://gpsd.io/NMEA.html)
@@ -110,6 +119,7 @@ class GPSPipeParser:
             )
         return dict()
 
+
 class GPSPipe:
     # command to retrieve status
     # This should be a command that remains running until stopped, outputting
@@ -128,17 +138,19 @@ class GPSPipe:
         async for gps in self.tracker:
             self.status = gps
 
+
+async def main():
+    gps = GPSPipe()
+
+    gps_task = asyncio.create_task(gps.run())
+
+    while True:
+        await asyncio.sleep(1)
+        print(json.dumps(gps.status, cls=JSONEncodeGPS))
+        sys.stdout.flush()  # so I can, e.g., pipe to jq(1)
+
+    await gps_task
+
+
 if __name__ == '__main__':
-    import asyncio, sys
-
-    async def main():
-        gps = GPSPipe()
-
-        gps_task = asyncio.create_task(gps.run())
-
-        while True:
-            await asyncio.sleep(1)
-            print(json.dumps(gps.status, cls=JSONEncodeGPS))
-            sys.stdout.flush()  # so I can, e.g., pipe to jq(1)
-
     asyncio.run(main())
