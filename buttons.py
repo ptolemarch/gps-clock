@@ -1,11 +1,15 @@
-import digitalio, enum, collections, itertools, warnings
+import asyncio, digitalio, enum
+from enum import Enum
 from collections import defaultdict
+from itertools import chain
 from adafruit_debouncer import Debouncer
 
 # dataclasses and their type annotations
 from dataclasses import dataclass
 from typing import Tuple, FrozenSet
 from adafruit_blinka.microcontroller.bcm283x.pin import Pin
+
+from clock import sleep_until_interval
 
 
 class DebouncerConfig:
@@ -18,7 +22,7 @@ class DebouncerConfig:
     multiple_press_max = 5/60
 
 
-class DebouncerValue(enum.Enum):
+class DebouncerValue(Enum):
     DOWN = False   # pressed
     UP = True      # released
 
@@ -37,7 +41,7 @@ class DebouncerValue(enum.Enum):
         return "DOWN" if self.is_DOWN(self.value) else "UP"
 
 
-class Press(enum.Enum):
+class Press(Enum):
     SHORT = "."
     LONG = "_"
     XLONG = "~"
@@ -81,7 +85,7 @@ class PressSequence:
 
     def __no_none(self, presses):
         return filter(lambda p: p is not None, presses)
-        
+
 
 @dataclass(frozen=True)  # therefore hashable
 class Gesture:
@@ -94,6 +98,7 @@ class Buttons:
         self.dbs = [PinnedDebouncer(p) for p in pins]
         self.states = [StartState(self.dbs)]
         self.callbacks = dict()
+        self.poll_on = True
 
     def set_callback(self, pins, sequence_str, callback):
         ids = frozenset(pin.id for pin in pins)
@@ -119,7 +124,7 @@ class Buttons:
         self._get_callback(gesture)()
 
     def poll(self):
-        new_states = list(itertools.chain.from_iterable(
+        new_states = list(chain.from_iterable(
             state.change() for state in self.states
         ))
         in_progress = list(filter(
@@ -140,18 +145,27 @@ class Buttons:
             self._handle_callback(state.gesture())
 
         # collect PinnedDebouncers into a new StartState
-        dbs = list(itertools.chain.from_iterable(
-            s.dbs for s in itertools.chain(starting, ending)
+        dbs = list(chain.from_iterable(
+            s.dbs for s in chain(starting, ending)
         ))
 
         # set up new states
         if dbs:
             if len(starting) == 1 and len(ending) == 0:
-                self.states = list(itertools.chain(in_progress, starting))
+                self.states = list(chain(in_progress, starting))
             else:
                 self.states = [*in_progress, StartState(dbs)]
         else:
             self.states = list(in_progress)
+
+    def stop(self):
+        self.poll_on = False
+
+    async def start(self):
+        self.poll_on = True
+        while self.keep_ticking:
+            self.poll()
+            await sleep_until_interval(1/60)
 
 
 class PinnedDebouncer:
@@ -187,7 +201,7 @@ class PinnedDebouncer:
 
 
 # used in SomeDownState and SomeUpState, below
-class WTFError(Exception):
+class ThisShouldNotHappen(Exception):
     pass
 
 
@@ -213,6 +227,7 @@ class DebouncerGroupState:
 
 class CollapsibleState(DebouncerGroupState):
     pass
+
 
 class StartState(CollapsibleState):  # no gesture has begun
     def change(self):
@@ -245,7 +260,7 @@ class SomeDownState(DebouncerGroupState):
         dbs_released = [db.rose for db in self.dbs]
         # (all released: impossible, because not all are even down)
         if all(dbs_released):
-            raise WTFError("they can't ALL have risen...")
+            raise ThisShouldNotHappen("they can't ALL have risen...")
         # some released: split the DebouncerGroup
         if any(dbs_released):
             # group one:
@@ -283,7 +298,7 @@ class SomeDownState(DebouncerGroupState):
                 (AllUpState(up_dbs, self.history)
                  if self.history else StartState(up_dbs))
             ]
-        
+
         # we're not done waiting for unanimity
         return [self]
 
@@ -325,7 +340,7 @@ class SomeUpState(DebouncerGroupState):
         dbs_pressed = [db.fell for db in self.dbs]
         # (all pressed: impossible, because not all are even up)
         if all(dbs_pressed):
-            raise WTFError("they can't ALL have fallen...")
+            raise ThisShouldNotHappen("they can't ALL have fallen...")
         # some pressed: split the DebouncerGroup
         if any(dbs_pressed):
             # group one:
@@ -361,7 +376,7 @@ class SomeUpState(DebouncerGroupState):
                 AllUpState(up_dbs, self.history),
                 AllDownState(down_dbs, self.history),
             ]
-        
+
         # we're not done waiting for unanimity
         return [self]
 
@@ -381,7 +396,7 @@ class AllUpState(DebouncerGroupState):  # a press has ended
 
     def change(self):
         super().poll()
-        
+
         dbs_pressed = [db.fell for db in self.dbs]
         # all pressed
         if all(dbs_pressed):
@@ -409,7 +424,7 @@ class EndState(CollapsibleState):  # the gesture has ended
         super().__init__(dbs, history)
 
     def change(self):  # this really never ought to get called
-        raise WTFError("why are you asking an EndState to change?!")
+        raise ThisShouldNotHappen("why are you asking an EndState to change?!")
 
     def gesture(self):
         sequence = PressSequence(tuple(self.history))
