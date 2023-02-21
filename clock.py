@@ -6,6 +6,7 @@ from adafruit_ht16k33.segments import Seg7x4
 from argparse import ArgumentParser, BooleanOptionalAction
 import board, signal
 
+
 async def sleep_until_interval(interval, result=None):
     r"""Given an interval, sleep until the beginning of the next whole
     interval.
@@ -23,7 +24,7 @@ async def sleep_until_interval(interval, result=None):
     return await asyncio.sleep(delay, result)
 
 
-class ClockConfig:
+class Config:
     #   -- 1 --            -- A --
     #  |       |          |       |
     # 32       2          F       B
@@ -74,20 +75,31 @@ class ClockConfig:
 
 class Clock:
     def __init__(self, i2c, *addrs,
-            brightness=ClockConfig.BRIGHTNESS,
-            blink=ClockConfig.BLINK_SEPARATORS,
-            local=ClockConfig.LOCAL_TIME
+            brightness=Config.BRIGHTNESS,
+            blink=Config.BLINK_SEPARATORS,
+            local=Config.LOCAL_TIME
         ):
-        self.seg7x4 = Seg7x4(i2c, addrs, auto_write=False)
-        self.seg7x4.brightness = brightness * ClockConfig.BRIGHTNESS_MULTIPLIER
 
         self.blink = blink
         self.local = local
+        self.brightness = brightness
 
-        self.curr_seg7s = [ClockConfig.NO_DOT] * (len(addrs) * 4)
+        self.seg7x4 = Seg7x4(i2c, addrs, auto_write=False)
+        self.seg7x4.brightness = brightness * Config.BRIGHTNESS_MULTIPLIER
+
+        self.curr_seg7s = [Config.NO_DOT] * (len(addrs) * 4)
         self.curr_colon = False
 
         self.keep_ticking = True
+
+    def increase_brightness(self):
+        pass
+
+    def decrease_brightness(self):
+        pass
+
+    def toggle_local(self):
+        pass
 
     def tick(self):
         t = time.time()
@@ -97,10 +109,10 @@ class Clock:
         separators = not self.blink or thirds < 30
 
         seg7s = list(map(lambda bits: bits[0] | bits[1], zip(
-            [ClockConfig.BITS[digit] for digit in chain.from_iterable(
+            [Config.BITS[digit] for digit in chain.from_iterable(
                 divmod(part, 10) for part in (hours, minutes, seconds, thirds)
             )],
-            ClockConfig.CLOCK_DOT_PATTERN
+            Config.CLOCK_DOT_PATTERN
         )))
 
         show = False
@@ -119,7 +131,8 @@ class Clock:
     def stop(self):
         self.keep_ticking = False
 
-    async def start(self):
+    async def run(self):
+        self.keep_ticking = True
         while self.keep_ticking:
             self.tick()
             await sleep_until_interval(1/60)
@@ -181,7 +194,9 @@ async def main():
     signal.signal(signal.SIGINT, stop_clock)
     signal.signal(signal.SIGTERM, stop_clock)
 
-    await clock.start()
+    clock_task = asyncio.create_task(clock.run(), name="clock")
+
+    await clock_task
 
 if __name__ == '__main__':
     asyncio.run(main())
