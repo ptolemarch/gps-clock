@@ -13,7 +13,7 @@ from clock import sleep_until_interval
 
 # to convert TTF to PIL:
 #    otf2bdf -r 50 -c M -p 18 -o B612Mono.bdf B612Mono-Regular.ttf
-#    pilfont.py B612Mono.bdf 
+#    pilfont.py B612Mono.bdf
 # you can also just use ImageFont.truetype(), but it looks like shit
 #   (whether or not you use RAQM)
 # To get sizes to (approximately) match ImageFont.truetype(), use -r 72
@@ -78,7 +78,7 @@ def _gen_image(writ):
     # - ImageFont.getbbox() works weirdly when given multi-line text. Which
     #   is the main reason we're not doing that (and not using
     #   ImageDraw.multiline_text())
-    
+
     # these will be the maximum dimensions across all lines
     left, top, right, bottom = map(max, zip(*map(font.getbbox, text)))
     line_width = right - left
@@ -169,7 +169,7 @@ class OLED:
             text=label
         )))
 
-        
+
 async def main():
     i2c = board.I2C()
     lol = OLED((128,64), i2c, 0x3d)
@@ -204,7 +204,7 @@ async def main():
 #
 #        lol.image(image)
 #        lol.show()
-        
+
 
 # small OLED:
 #  big: B612Mono-24.pil
