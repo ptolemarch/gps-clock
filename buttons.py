@@ -1,6 +1,5 @@
-import asyncio, digitalio, enum
+import digitalio, enum
 from enum import Enum
-from collections import defaultdict
 from itertools import chain
 from adafruit_debouncer import Debouncer
 
@@ -8,8 +7,6 @@ from adafruit_debouncer import Debouncer
 from dataclasses import dataclass
 from typing import Tuple, FrozenSet
 from adafruit_blinka.microcontroller.bcm283x.pin import Pin
-
-from clock import sleep_until_interval
 
 
 class DebouncerConfig:
@@ -98,7 +95,6 @@ class Buttons:
         self.dbs = [PinnedDebouncer(p) for p in pins]
         self.states = [StartState(self.dbs)]
         self.callbacks = dict()
-        self.poll_on = True
 
     def set_callback(self, pins, sequence_str, callback):
         ids = frozenset(pin.id for pin in pins)
@@ -157,15 +153,6 @@ class Buttons:
                 self.states = [*in_progress, StartState(dbs)]
         else:
             self.states = list(in_progress)
-
-    def stop(self):
-        self.poll_on = False
-
-    async def start(self):
-        self.poll_on = True
-        while self.keep_ticking:
-            self.poll()
-            await sleep_until_interval(1/60)
 
 
 class PinnedDebouncer:

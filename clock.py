@@ -1,27 +1,10 @@
-import asyncio, time
+import time
 from itertools import chain
 from adafruit_ht16k33.segments import Seg7x4
 
 # for main()
 from argparse import ArgumentParser, BooleanOptionalAction
 import board, signal
-
-
-async def sleep_until_interval(interval, result=None):
-    r"""Given an interval, sleep until the beginning of the next whole
-    interval.
-
-    :param interval: an interval, expressed in seconds
-    :param result: returned when done sleeping
-    :return: result, if passed, else None
-    """
-    now = time.time()
-
-    # when is the next interval?
-    when = ((now + interval) // interval) * interval
-    delay = when - now
-
-    return await asyncio.sleep(delay, result)
 
 
 class Config:
@@ -90,8 +73,6 @@ class Clock:
         self.curr_seg7s = [Config.NO_DOT] * (len(addrs) * 4)
         self.curr_colon = False
 
-        self.keep_ticking = True
-
     def increase_brightness(self):
         pass
 
@@ -99,7 +80,7 @@ class Clock:
         pass
 
     def toggle_local(self):
-        pass
+        self.local = not self.local
 
     def tick(self):
         t = time.time()
@@ -108,11 +89,15 @@ class Clock:
         thirds = int((t%1)*60)
         separators = not self.blink or thirds < 30
 
+        # This is undoubtedly too cute by half.
+        # But it is very cute.
         seg7s = list(map(lambda bits: bits[0] | bits[1], zip(
             [Config.BITS[digit] for digit in chain.from_iterable(
                 divmod(part, 10) for part in (hours, minutes, seconds, thirds)
             )],
-            Config.CLOCK_DOT_PATTERN
+            map(lambda bits: bits[0] * bits[1], zip(
+                Config.CLOCK_DOT_PATTERN, [separators]*8
+            ))
         )))
 
         show = False
@@ -121,28 +106,20 @@ class Clock:
                 continue
             self.seg7x4.set_digit_raw(i, new)
             show = True
-        if separators is not self.curr_colon:
+        if self.curr_colon is not separators:
+            self.curr_colon = separators
             self.seg7x4.colon = separators
             show = True
 
         if show:
             self.seg7x4.show()
 
-    def stop(self):
-        self.keep_ticking = False
-
-    async def run(self):
-        self.keep_ticking = True
-        while self.keep_ticking:
-            self.tick()
-            await sleep_until_interval(1/60)
-
-        # clear
+    def clear(self):
         self.seg7x4.fill(0)
         self.seg7x4.show()
 
 
-async def main():
+def main():
     def auto_int(n):
         # allow hexadeciaml (or binary, or octal, or decimal) numbers here
         return int(n, 0)
@@ -166,6 +143,10 @@ async def main():
         action=BooleanOptionalAction,
         help="show/hide separators based on fraction of second"
     )
+    argyle.add_argument('-c', '--clear',
+        action=BooleanOptionalAction,
+        help="clear clock when program interrupted"
+    )
     argyle.add_argument('-u', '--universal-time',
         action=BooleanOptionalAction,
         help="show UTC rather than local time"
@@ -188,15 +169,36 @@ async def main():
         local=not(args.universal_time)
     )
 
+    def sleep_until_interval(interval):
+        r"""Given an interval, sleep until the beginning of the next whole
+        interval.
+
+        :param interval: an interval, expressed in seconds
+        :param result: returned when done sleeping
+        :return: None
+        """
+        now = time.time()
+
+        # when is the next interval?
+        when = ((now + interval) // interval) * interval
+        delay = when - now
+
+        time.sleep(delay)
+
+    keep_ticking = True
     def stop_clock(signal_received, stack_frame):
-        clock.stop()
+        nonlocal keep_ticking
+        keep_ticking = False
 
     signal.signal(signal.SIGINT, stop_clock)
     signal.signal(signal.SIGTERM, stop_clock)
 
-    clock_task = asyncio.create_task(clock.run(), name="clock")
+    while keep_ticking:
+        clock.tick()
+        sleep_until_interval(1/60)
 
-    await clock_task
+    if args.clear:
+        clock.clear()
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    main()

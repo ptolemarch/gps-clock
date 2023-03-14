@@ -1,16 +1,12 @@
 import asyncio
+from collections import defaultdict
 
 class Tracker:
     def __init__(self, cmd, *parsers):
         self.cmd = cmd
         self.parsers = parsers
         self.proc = None
-        self.accumulator = dict(
-        # this was only here to provide a default true value
-        # but that also means it can never possibly end,
-        # so TODO: fix that and leave this out
-        #    command = self.cmd
-        )
+        self.accumulator = defaultdict(str)
 
     async def __aenter__(self):
         await self.__start()
@@ -44,6 +40,7 @@ class Tracker:
         self.stream = self.proc.stdout
 
     async def __stop(self):
+        print('tracker stopped')
         self.proc.terminate()
         await self.proc.wait()
 

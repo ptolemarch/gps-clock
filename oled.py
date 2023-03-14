@@ -8,7 +8,7 @@ from math import floor
 from PIL import Image, ImageDraw, ImageFont
 from textwrap import dedent
 
-from clock import sleep_until_interval
+#from clock import sleep_until_interval
 #from scheduler import run_in
 
 # to convert TTF to PIL:
@@ -89,9 +89,9 @@ def _gen_image(writ):
     text_height = line_height * line_count
 
     if text_width > width:
-        warn("text wider than OLED")
+        print(f"text wider than OLED: {text}")
     if text_height > height:
-        warn("text taller than OLED")
+        print(f"text taller than OLED: {text}")
 
     height_surplus = height - text_height
     spacing = floor(height_surplus / line_count)
@@ -100,10 +100,10 @@ def _gen_image(writ):
     draw = ImageDraw.Draw(image)
     # figure out where to position lines
     # for now, always all the way to the left
-    position_x = 0
-    position_y = 0 if align == WritAlign.TOP else spacing
+    position_x = (0 if align == WritAlign.TOP else width - text_width)
+    position_y = (0 if align == WritAlign.TOP else spacing)
     for t in text:
-        draw.text((0,position_y), t, fill=255, font=font, spacing=spacing)
+        draw.text((position_x,position_y), t, fill=255, font=font, spacing=spacing)
         position_y += line_height + spacing
 
     return image
@@ -146,14 +146,27 @@ class OLED:
         self.ssd1306.fill(1)
         self.ssd1306.show()
 
-    def __show(self, image):
+    async def __show(self, image):
         self.ssd1306.image(image)
         self.ssd1306.show()
+
+    async def write(self, align, font, text):
+        await self.__initialize()
+
+        await self.__show(_gen_image(Writ(
+            size=self.size,
+            align=WritAlign(align),
+            font=font,
+            text=text
+        )))
+
+
+
 
     async def update(self, value, label):
         await self.__initialize()
 
-        self.__show(_gen_image(Writ(
+        await self.__show(_gen_image(Writ(
             size=self.size,
             align=WritAlign.TOP,
             font=self.value_font_filename,
@@ -162,7 +175,7 @@ class OLED:
 
         await sleep_until_interval(1/2)
 
-        self.__show(_gen_image(Writ(
+        await self.__show(_gen_image(Writ(
             size=self.size,
             align=WritAlign.BOTTOM,
             font=self.label_font_filename,

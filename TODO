@@ -1,0 +1,68 @@
+DONE
+- rewrite clock code for simplicity and async
+- rewrite antenna code for simplicity and async
+- rewrite PPS offset for simplicity and async
+- get other GPS data
+- buttons
+- OLEDs
+- update clock precisely once per third (?)
+- button LEDs
+
+TODO
+- i2c + lock object?
+- LEDs can blink?
+
+- sense (via `chronyc sourcestats`?) whether we're actually using the PPS signal
+  - report via LED blinks if not
+  - ability to restart chronyd.service?
+    - automatically?
+    - via button press?
+
+- mode changes (w/buttons)
+- system shutdown (w/buttons)
+
+- clock sends events on the second
+  ACTUALLY MAYBE WHAT HAPPENS IS THIS:
+  - actually maybe just provides a callback
+  - callback is provided by central code
+  - callback creates an event
+  - attached to event is GPS status
+
+- definitely going to want to handle exceptions and shutdown gracefully,
+  especially so we can clear displays
+
+THEN
+- make into an installable module
+- put on Github / Gitlab
+- CI/CD just for the exercise of it
+- put on PyPi just for the exercise of it
+
+THINGS TO DISPLAY
+Small OLED:
+- PPS offset
+- temperature `vcgencmd measure_temp`
+- #sats
+
+Big OLED:
+- lat / long / alt / err / #sats
+
+- uptime
+- # of NTP users
+  - `chronyc clients`
+
+THINGS FOR LEDS
+- !!! ALERT for when chrony isn't using GPS clock
+  - `chronyc tracking`
+    - "Reference ID" = "PPS"
+    - "Stratum" = "1"
+- Antenna status
+- temperature `vcgencmd measure_temp`
+- throttled `vcgencmd get_throttled`
+
+THINGS FOR BUTTONS
+- switch between offeset and temp
+- switch between local and UTC
+- reboot
+- increase/decrese brightness
+	- of clock
+	- of OLEDs

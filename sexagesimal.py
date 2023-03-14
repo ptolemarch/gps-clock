@@ -1,6 +1,6 @@
 import math
 
-class DecDotSex:
+class DecDotSex():
     NUMBER_BASE = 60
     def __init__(self, number, digits=3):
         if isinstance(number, str):
@@ -31,6 +31,10 @@ class DecDotSex:
         f = ",".join(str(d) for d in self.fraction)
         return f"{i};{f}"
 
+#    def __format__(self, format_spec):
+#        print(format_spec)
+#        return self.__str__()
+#
     def __float__(self):
         n = self.integer * 1.0
         denominator = 1
@@ -76,7 +80,7 @@ if __name__ == '__main__':
         for line in fileinput.input():
             try:
                 num = float(line)
-                print(DecDotSex(num))
+                print(f'{DecDotSex(num):>12}')
             except ValueError:
                 pass
             try:
