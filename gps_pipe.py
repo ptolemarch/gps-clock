@@ -1,10 +1,11 @@
+import asyncio, json, contextlib
 from enum import Enum
-import json
+from collections import defaultdict
 
 from tracker import Tracker
 
 # for main()
-import asyncio, sys
+import sys
 
 
 class Lookupable:
@@ -92,7 +93,7 @@ class GPSPipeParser:
             nsec = (sec * 1e9) + (report['clock_nsec'] - report['real_nsec'])
             usec = nsec / 1e3
             return dict(
-               pps_offset = usec,
+               pps_offset_usec = usec,
             )
         if rclass == "TPV":
             return dict(
@@ -120,8 +121,8 @@ class GPSPipeParser:
         return dict()
 
 
-class GPSPipe:
-    # command to retrieve status
+class GPS:
+    # command to retrieve GPS info
     # This should be a command that remains running until stopped, outputting
     #  reports as NMEA or JSON sentences, one per line
     COMMAND = ['/usr/bin/gpspipe', '--nmea', '--json']
@@ -131,22 +132,22 @@ class GPSPipe:
         else:
             self.cmd = cmd
 
-        self.status = dict()  # we know nothing at first
+        self.info = defaultdict(str)  # we know nothing at first
         self.tracker = Tracker(self.cmd, GPSPipeParser())
 
     async def run(self):
         async for gps in self.tracker:
-            self.status = gps
+            self.info = gps
 
 
 async def main():
-    gps = GPSPipe()
+    gps = GPS()
 
     gps_task = asyncio.create_task(gps.run())
 
     while True:
         await asyncio.sleep(1)
-        print(json.dumps(gps.status, cls=JSONEncodeGPS))
+        print(json.dumps(gps.info, cls=JSONEncodeGPS))
         sys.stdout.flush()  # so I can, e.g., pipe to jq(1)
 
     await gps_task
