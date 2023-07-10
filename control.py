@@ -30,12 +30,12 @@ class Config:
             i2c = 0x3c,
             size = (128, 32),
             font = dotdict(
-                value_8='/home/ptolemarch/gps_clock/fonts/profont/ProFont_r400-29.pil',
-                value_11='/home/ptolemarch/gps_clock/fonts/profont/ProFont_r400-22.pil',
-                value_13='/home/ptolemarch/gps_clock/fonts/ProFontmedium-17.pil',
-                value_18='/home/ptolemarch/gps_clock/fonts/profont/ProFont_r400-15.pil',
-                value_n='/home/ptolemarch/gps_clock/fonts/profont/ProFont_r400-12.pil',
-                label='/home/ptolemarch/gps_clock/fonts/profont/ProFont_r400-11.pil',
+                value_8='/home/ptolemarch/gps-clock/fonts/profont/ProFont_r400-29.pil',
+                value_11='/home/ptolemarch/gps-clock/fonts/profont/ProFont_r400-22.pil',
+                value_13='/home/ptolemarch/gps-clock/fonts/ProFontmedium-17.pil',
+                value_18='/home/ptolemarch/gps-clock/fonts/profont/ProFont_r400-15.pil',
+                value_n='/home/ptolemarch/gps-clock/fonts/profont/ProFont_r400-12.pil',
+                label='/home/ptolemarch/gps-clock/fonts/profont/ProFont_r400-11.pil',
             ),
         ),
         big = dotdict(
@@ -44,8 +44,8 @@ class Config:
             font = dotdict(
                 #value='fonts/uw-ttyp0-1.3/genbdf/t0-18b-i01.pil',
                 #label='fonts/uw-ttyp0-1.3/genbdf/t0-11-i01.pil',
-                value='/home/ptolemarch/gps_clock/fonts/ProFontmedium-17.pil',
-                label='/home/ptolemarch/gps_clock/fonts/profont/ProFont_r400-11.pil',
+                value='/home/ptolemarch/gps-clock/fonts/ProFontmedium-17.pil',
+                label='/home/ptolemarch/gps-clock/fonts/profont/ProFont_r400-11.pil',
             ),
         ),
     )
@@ -161,8 +161,7 @@ class Control:
 
                 with contextlib.suppress(TypeError, ValueError):
                     offset = self.gps.info['pps_offset_usec']
-
-                text = "%+4.3f\xB5s"%(offset)
+                    text = "%+4.3f\xB5s"%(offset)
 
                 # TODO: just realized that this should instead be, like,
                 # converting from usec to sec to minutes, etc.
