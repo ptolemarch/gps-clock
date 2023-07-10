@@ -56,6 +56,12 @@ class JSONEncodeGPS(json.JSONEncoder):
         return json.JSONEncoder.default(self, obj)
 
 
+# subscript but suppress KeyError
+def _s(container, key, default=None):
+    with contextlib.suppress(KeyError):
+        return container[key]
+    return default
+
 # NMEA reference: https://cdn-shop.adafruit.com/product-files/1059/CD+PA1616D+Datasheet+v.05.pdf
 # (also theoretically https://gpsd.io/NMEA.html)
 # GPSd JSON reference: https://gpsd.io/gpsd_json.html
@@ -80,33 +86,33 @@ class GPSPipeParser:
 
         if header == "PCD":
             return dict(
-                antenna = AntennaStatus.lookup(int(values[1]))
+                antenna = AntennaStatus.lookup(int(_s(values,1,0)))
             )
         return dict()
 
     def parse_json(self, line):
         report = json.loads(line)
-        rclass = report['class']
+        rclass = _s(report,'class','')
 
         if rclass == "PPS":
-            sec = report['clock_sec'] - report['real_sec']
-            nsec = (sec * 1e9) + (report['clock_nsec'] - report['real_nsec'])
+            sec = _s(report,'clock_sec',0) - _s(report,'real_sec',0)
+            nsec = (sec * 1e9) + (_s(report,'clock_nsec',0) - _s(report,'real_nsec',0))
             usec = nsec / 1e3
             return dict(
                pps_offset_usec = usec,
             )
         if rclass == "TPV":
             return dict(
-                mode = GPSMode.lookup(report['mode']),
-                status = GPSStatus.lookup(report['status']),
-                latitude = report['lat'],
-                longitude = report['lon'],
-                altitude = report['altMSL'],
-                error_2d = report['eph'],
-                error_3d = report['sep'],
-                error_latitude = report['epy'],
-                error_longitude = report['epx'],
-                error_altitude = report['epv'],
+                mode = GPSMode.lookup(_s(report,'mode',0)),
+                status = GPSStatus.lookup(_s(report,'status',0)),
+                latitude = _s(report,'lat',0),
+                longitude = _s(report,'lon',0),
+                altitude = _s(report,'altMSL',0),
+                error_2d = _s(report,'eph',0),
+                error_3d = _s(report,'sep',0),
+                error_latitude = _s(report,'epy',0),
+                error_longitude = _s(report,'epx',0),
+                error_altitude = _s(report,'epv',0),
             )
         if rclass == "SKY":
             # TODO: count
@@ -115,8 +121,8 @@ class GPSPipeParser:
             # - GLONASS (gnssid = 6)
             # from report['satellites']
             return dict(
-                satellites = report['nSat'],
-                satellites_used = report['uSat'],
+                satellites = _s(report,'nSat',0),
+                satellites_used = _s(report,'uSat',0),
             )
         return dict()
 
