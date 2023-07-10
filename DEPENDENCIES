@@ -1,0 +1,5 @@
+pip install adafruit-circuitpython-debouncer
+pip install adafruit-circuitpython-ht16k33
+pip install adafruit-circuitpython-ssd1306
+pip install --upgrade Pillow
+pip install --upgrade Adafruit-Blinka
