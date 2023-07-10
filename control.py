@@ -1,6 +1,7 @@
 import time, asyncio, signal, contextlib, json, sys
 from collections import defaultdict
 
+import systemd.daemon
 import board
 
 from gps import GPS, AntennaStatus, GPSMode
@@ -29,8 +30,12 @@ class Config:
             i2c = 0x3c,
             size = (128, 32),
             font = dotdict(
-                value='fonts/profont/ProFont_r400-29.pil',
-                label='fonts/profont/ProFont_r400-11.pil',
+                value_8='/home/ptolemarch/gps_clock/fonts/profont/ProFont_r400-29.pil',
+                value_11='/home/ptolemarch/gps_clock/fonts/profont/ProFont_r400-22.pil',
+                value_13='/home/ptolemarch/gps_clock/fonts/ProFontmedium-17.pil',
+                value_18='/home/ptolemarch/gps_clock/fonts/profont/ProFont_r400-15.pil',
+                value_n='/home/ptolemarch/gps_clock/fonts/profont/ProFont_r400-12.pil',
+                label='/home/ptolemarch/gps_clock/fonts/profont/ProFont_r400-11.pil',
             ),
         ),
         big = dotdict(
@@ -39,8 +44,8 @@ class Config:
             font = dotdict(
                 #value='fonts/uw-ttyp0-1.3/genbdf/t0-18b-i01.pil',
                 #label='fonts/uw-ttyp0-1.3/genbdf/t0-11-i01.pil',
-                value='fonts/ProFontmedium-17.pil',
-                label='fonts/profont/ProFont_r400-11.pil',
+                value='/home/ptolemarch/gps_clock/fonts/ProFontmedium-17.pil',
+                label='/home/ptolemarch/gps_clock/fonts/profont/ProFont_r400-11.pil',
             ),
         ),
     )
@@ -99,17 +104,24 @@ class Control:
 
     async def run(self):
         self.tasks = [asyncio.create_task(aw[1], name=aw[0]) for aw in (
+            ("systemd", self.systemd_task()),
             ("gps", self.gps_task()),
             ("chronyc_tracking", self.chronyc_tracking_task()),
             ("buttons", self.buttons_task()),
             ("clock", self.clock_task()),
-            ("big_oled", self.big_oled_task()),
             ("little_oled", self.little_oled_task()),
+            ("big_oled", self.big_oled_task()),
             ("top_led", self.top_led_task()),
             ("bottom_led", self.bottom_led_task()),
         )]
 
         await asyncio.gather(*(self.tasks))
+
+    async def systemd_task(self):
+        systemd.daemon.notify('READY=1')
+        while True:
+            await asyncio.sleep(1)
+            systemd.daemon.notify('WATCHDOG=1')
 
     async def gps_task(self):
         await self.gps.run()
@@ -136,47 +148,74 @@ class Control:
         finally:
             self.clock.clear()
 
+    async def little_oled_task(self):
+        oled = self.oled['little']
+        try:
+            while True:
+                # four-second loop
+                await self.sleep_until_interval(4)
+                await oled.write('top', Config.oled.little.font.label, (
+                    "PPS Offset",
+                ))
+                await asyncio.sleep(0.5)
+
+                with contextlib.suppress(TypeError, ValueError):
+                    offset = self.gps.info['pps_offset_usec']
+
+                text = "%+4.3f\xB5s"%(offset)
+
+                # TODO: just realized that this should instead be, like,
+                # converting from usec to sec to minutes, etc.
+                length = len(text)
+                if length <= 8:
+                    font = Config.oled.little.font.value_8
+                elif length <= 11:
+                    # This barely fits 11 characters, and I'm okay with that.
+                    # (The +/- at the front will be slightly cut off.)
+                    font = Config.oled.little.font.value_11
+                elif length <= 13:
+                    font = Config.oled.little.font.value_13
+                elif length <= 18:
+                    font = Config.oled.little.font.value_18
+                else:
+                    font = Config.oled.little.font.value_n
+
+                # the comma at the end is *not* optional, for Python reasons
+                # TODO: it'd be awfully nice to fix that
+                await oled.write('bottom', font, (
+                    text,
+                ))
+
+                await asyncio.sleep(1)
+                await oled.clear()
+        finally:
+            await oled.clear()
+
     async def big_oled_task(self):
         oled = self.oled['big']
         try:
             while True:
-                await self.sleep_until_interval(2)
+                # four-second loop, but start on second 2
+                await self.sleep_until_interval(4, 2)
                 await oled.write('top', Config.oled.big.font.label, (
                     'Latitude',
                     'Longitude',
                     'Altitude     Sats',
                 ))
-                await asyncio.sleep(0.2)
+                await asyncio.sleep(0.5)
 
-                # this is gonna want real __format__ support someday
-                await oled.write('bottom', Config.oled.big.font.value, (
-                    ' ' + str(DecDotSex(self.gps.info['latitude'])),
-                    str(DecDotSex(self.gps.info['longitude'])),
-                    str(self.gps.info['altitude'])
-                    + '  ' + str(self.gps.info['satellites_used'])
-                    + '/' + str(self.gps.info['satellites'])
-                    ,
-                ))
-                await self.sleep_until_interval(2, 1)
-                await oled.clear()
-        finally:
-            await oled.clear()
-
-    async def little_oled_task(self):
-        oled = self.oled['little']
-        try:
-            while True:
-                await self.sleep_until_interval(2)
-                await oled.write('top', Config.oled.little.font.label, (
-                    "PPS Offset",
-                ))
-                await asyncio.sleep(0.2)
-
-                # the comma at the end is *not* optional, for Python reasons
-                await oled.write('bottom', Config.oled.little.font.value, (
-                    "%+4.3f\xB5s"%(self.gps.info['pps_offset_usec']),
-                ))
-                await self.sleep_until_interval(2, 1)
+                # TODO: this is gonna want real __format__ support someday
+                with contextlib.suppress(TypeError, ValueError):
+                    await oled.write('bottom', Config.oled.big.font.value, (
+                        ' ' + str(DecDotSex(self.gps.info['latitude'])),
+                        str(DecDotSex(self.gps.info['longitude'])),
+                        str(self.gps.info['altitude'])
+                        + '  ' + str(self.gps.info['satellites_used'])
+                        + '/' + str(self.gps.info['satellites'])
+                        # TODO: it'd be awfully nice to fix this:
+                        , # non-optional comma!
+                    ))
+                await asyncio.sleep(1)
                 await oled.clear()
         finally:
             await oled.clear()
@@ -232,7 +271,7 @@ class Control:
             led.off()
 
 
-    async def sleep_until_interval(self, interval, offset=0, result=None):
+    async def sleep_until_interval(self, interval, offset=0, result=None, debug=None):
         r"""Given an interval, sleep until the beginning of the next whole
         interval.
 
@@ -244,8 +283,13 @@ class Control:
 
         # when is the next interval?
         when = ((now + interval) // interval) * interval
-        delay = when - now + offset
+        delay = (when + offset) - now
 
+        if debug:
+            print(f'( {now} + {interval} ) = {now + interval}')
+            print(f'( {now} + {interval} ) // interval = {(now + interval) // interval}')
+            print(f'( ( {now} + {interval} ) // interval ) * interval ) = {((now + interval) // interval) * interval}')
+            print(f'sleep for {delay}s; when:{when}; offset:{offset}; now:{now}')
         return await asyncio.sleep(delay, result=result)
 
 
@@ -253,9 +297,16 @@ async def main():
     control = Control()
 
     loop = asyncio.get_running_loop()
+
     loop.add_signal_handler(signal.SIGINT, control.stop)
     loop.add_signal_handler(signal.SIGTERM, control.stop)
     #loop.add_signal_handler(signal.SIGQUIT, control.stop)
+
+
+    # SIGABRT would mostly be sent by systemd after failing
+    # to get a watchdog ping. Which probably means something's gone
+    # pretty wrong, and this won't help much anyway. But here goes.
+    loop.add_signal_handler(signal.SIGABRT, control.stop)
 
     with contextlib.suppress(asyncio.CancelledError):
         await control.run()

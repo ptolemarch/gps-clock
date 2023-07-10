@@ -1,0 +1,17 @@
+[Unit]
+Description=GPS Clock
+Wants=chrony.service gpsd.service gps_antenna_status.service
+After=chrony.service gpsd.service gps_antenna_status.service
+
+[Service]
+Type=notify
+User=ticker
+ExecStart=python3 /home/ticker/gps_clock/control.py
+TimeoutSec=4
+WatchdogSec=4
+TimeoutAbortSec=4
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

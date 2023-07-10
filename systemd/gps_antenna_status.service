@@ -1,0 +1,11 @@
+[Unit]
+Description=GPS Antenna Reporting
+Before=gpsd.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=gpsctl -t MTK-3301 -x '$CDCMD,33,1*7C' /dev/serial0
+
+[Install]
+WantedBy=multi-user.target
