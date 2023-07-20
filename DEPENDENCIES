@@ -1,3 +1,5 @@
 sudo apt install python3-systemd libopenjp2-7
 
+user ticker, member of groups i2c & gpio
+
 pip install --user --upgrade Adafruit-Blinka Pillow adafruit-circuitpython-debouncer adafruit-circuitpython-ht16k33 adafruit-circuitpython-ssd1306 multibutton-debouncer
