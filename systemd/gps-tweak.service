@@ -1,11 +1,11 @@
 [Unit]
-Description=GPS Antenna Reporting
+Description=GPS Settings Tweaks
 Before=gpsd.service
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=gpsctl -t MTK-3301 -x '$CDCMD,33,1*7C' /dev/serial0
+ExecStart=/usr/local/bin/gps-tweak.sh
 
 [Install]
 WantedBy=multi-user.target

@@ -4,9 +4,10 @@ from collections import defaultdict
 import systemd.daemon
 import board
 
+from multibutton_debouncer import MultiButton
+
 from gps import GPS, AntennaStatus, GPSMode
 from chrony import ChronycTracking
-from buttons import Buttons
 from clock import Clock
 from oled import OLED
 from led import LED
@@ -134,7 +135,7 @@ class Control:
     async def buttons_task(self):
         t = Config.buttons.top
         b = Config.buttons.bottom
-        buttons = Buttons(t, b)
+        buttons = MultiButton(t, b)
         buttons.set_callback([t, b], "_", lambda: self.clock.toggle_local())
         while True:
             await self.sleep_until_interval(1/60)

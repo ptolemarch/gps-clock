@@ -1,5 +1,3 @@
-pip install adafruit-circuitpython-debouncer
-pip install adafruit-circuitpython-ht16k33
-pip install adafruit-circuitpython-ssd1306
-pip install --upgrade Pillow
-pip install --upgrade Adafruit-Blinka
+sudo apt install python3-systemd libopenjp2-7
+
+pip install --user --upgrade Adafruit-Blinka Pillow adafruit-circuitpython-debouncer adafruit-circuitpython-ht16k33 adafruit-circuitpython-ssd1306 multibutton-debouncer

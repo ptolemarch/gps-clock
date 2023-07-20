@@ -1,0 +1,19 @@
+[Unit]
+Description=GPS Clock
+After=chrony.service gpsd.service gps-tweak.service
+Requires=chrony.service gpsd.service gps-tweak.service
+
+[Service]
+Type=notify
+#User=ticker
+#ExecStart=python3 /home/ticker/gps_clock/control.py
+#ExecStartPre=gpsctl -t MTK-3301 -x '$CDCMD,33,1*7C' /dev/serial0
+ExecStart=python3 /home/ptolemarch/gps-clock/control.py
+TimeoutSec=4
+WatchdogSec=4
+TimeoutAbortSec=4
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
