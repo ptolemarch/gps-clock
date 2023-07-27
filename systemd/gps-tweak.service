@@ -1,6 +1,9 @@
 [Unit]
 Description=GPS Settings Tweaks
 Before=gpsd.service
+# this doesn't appear to do anything
+# instead, in gps-tweak.sh, sleep until it shows up
+#After=sys-devices-platform-soc-3f201000.serial-tty-ttyAMA0.device
 
 [Service]
 Type=oneshot
