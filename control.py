@@ -160,6 +160,7 @@ class Control:
                 ))
                 await asyncio.sleep(0.5)
 
+                text = "\xB1\xBF\xD8?\xB5s"
                 with contextlib.suppress(TypeError, ValueError):
                     offset = self.gps.info['pps_offset_usec']
                     text = "%+4.3f\xB5s"%(offset)
