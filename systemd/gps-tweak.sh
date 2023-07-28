@@ -1,6 +1,10 @@
 #! /bin/bash
 
-serial=/dev/ttyAMA0  # major 204, minor 64
+# /dev/serial0 is a symlink to /dev/ttyAMA0,
+#  but if we use /dev/ttyAMA0 directly, we get this error:
+#      gpsctl:ERROR: SER: /dev/ttyAMA0 already opened by another process
+#      gpsctl:ERROR: initial GPS device /dev/ttyAMA0 open failed
+serial=/dev/serial0
 
 die() {
 	retval=$1 ; shift
@@ -9,26 +13,11 @@ die() {
 	exit $retval
 }
 
-while ! [[ -c "$serial" ]] ; do
-	echo "No character special file at [$serial]. Waiting..." 1>&2
-	sleep 0.1
-done
+# Sleep briefly to let gpsd get on its feet.
+sleep 0.5
 
-#if [[ -c "$serial" ]] ; then : else
-#	echo "NO character special file at [$serial]" 1>&2
-#	exit 1
-#fi
-
-serial_major=$(stat -c %t "$serial")
-serial_minor=$(stat -c %T "$serial")
-if [[ "$serial_major" = "cc" ]] && [[ "$serial_minor" = "40" ]] ; then : ; else
-	echo "character special file at [$serial] has weird device numbers:" 1>&2
-	echo "    major: [$serial_major] (expected cc hex = 204 dec)" 1>&2
-	echo "    minor: [$serial_minor] (expected 40 hex =  64 dec)" 1>&2
-	exit 2
-fi
-
-# full cold restart  -- don't do this!
+# full cold restart -- don't do this!
+# (Documented here in case I need it in the future.)
 # $PMTK104*37
 
 # disable easy mode, whatever that is
@@ -40,32 +29,31 @@ fi
 # from satellites, so the function will be helpful for positioning and TTFF
 # improvement under indoor or urban condition, the Backup power (VBACKUP) is
 # necessary.
-#echo -e -n '\$PMTK869,1,0*34\r\n'  >> "$serial"
+#gpsctl -x '$PMTK869,1,0*34' "$serial" \
 
-# baud rate
-echo -e -n '\$PMTK251,115200*1F\r\n'  >> "$serial" \
+# baud rate to 115200,
+#  which helps chrony to align PPS with GPS,
+#  and therefore really to make the time signal much, much better
+gpsctl -x '$PMTK251,115200*1F' "$serial" \
 	|| die 3 "can't set baud rate" 1>&2
-sleep 0.5
 
+# Honestly, I have no idea whether enabling SBAS, DGPS, or AIC helps
+#  a whit. They all seem neat, though.
 # enable SBAS
-echo -e -n '\$PMTK313,1*2E\r\n'  >> "$serial" \
+gpsctl -x '$PMTK313,1*2E' "$serial" \
 	|| die 4 "can't enable SBAS" 1>&2
-sleep 0.5
-
 # DGPS via WAAS (satellite)
-echo -e -n '\$PMTK301,2*2E\r\n'  >> "$serial" \
+gpsctl -x '$PMTK301,2*2E' "$serial" \
 	|| die 5 "can't enable DGPS via WAAS" 1>&2
-sleep 0.5
-
 # Active Interference Cancellation (AIC)
-echo -e -n '\$PMTK286,1*23\r\n'  >> "$serial" \
+gpsctl -x '$PMTK286,1*23' "$serial" \
 	|| die 6 "can't enable AIC" 1>&2
-sleep 0.5
 
+# Without this, there's no way to tell whether the system is using
+#  the external GPS antenna.
 # turn on antenna reporting
-echo -e -n '\$CDCMD,33,1*7C\r\n'  >> "$serial" \
+gpsctl -x '$CDCMD,33,1*7C' "$serial" \
 	|| die 7 "can't turn on antenna reporting" 1>&2
-sleep 0.5
 
 # hot restart  -- let's maybe not do this
-#echo -e -n '\$PMTK101*32\r\n'  >> "$serial"
+#gpsctl -x '$PMTK101*32' "$serial" \
